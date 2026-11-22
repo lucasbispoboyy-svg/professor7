@@ -1,0 +1,251 @@
+(function () {
+  // Downsell de saída desativado: não instala gatilhos, popups ou interceptações.
+  return;
+  if (window.__lvBackRedirectInstalled) return;
+  window.__lvBackRedirectInstalled = true;
+
+  var IN_FRAME = window.self !== window.top;
+
+  function normalize(p) {
+    p = (p || '').split('?')[0].split('#')[0];
+    p = p.replace(/\.html$/i, '').replace(/\/$/, '');
+    if (p === '') p = '/';
+    return p;
+  }
+
+  var TARGETS = {
+    '/index': '/oferta',
+    '/loja': '/',
+    // '/pagamento' volta para a home com popup (tratado em onBack).
+    '/oferta': '/',
+    '/upsell1': 'pagamento.html',
+    '/upsell2': '/upsell1',
+    '/upsell3': '/upsell2',
+    '/upsell4': '/upsell3',
+    '/obrigado': '/upsell4'
+  };
+
+  // Páginas da home: o voltar abre popup de desconto em vez de redirecionar.
+  var HOME_PATHS = { '/': true, '/site': true };
+
+  function targetFor(path) {
+    return TARGETS[normalize(path)] || null;
+  }
+
+  function redirect(to) {
+    // Dentro do quadro da página inicial, a navegação acontece na janela inteira,
+    // do mesmo jeito que o resto do site faz (e guarda os parâmetros da campanha).
+    try {
+      if (window.top && window.top !== window && window.top.location.origin === window.location.origin) {
+        var t = window.top.location;
+        var tu = new URL(to, t.href);
+        tu.search = t.search;
+        tu.hash = t.hash;
+        t.assign(tu.toString());
+        return;
+      }
+    } catch (e) {}
+    var url;
+    try {
+      url = new URL(to, location.href);
+      url.search = location.search;
+      url.hash = location.hash;
+    } catch (e) {
+      url = to + location.search + location.hash;
+    }
+    try { window.location.assign(url.toString()); } catch (e2) { window.location.href = url.toString(); }
+  }
+
+  // ---------- Popup de desconto (somente na home) ----------
+  var popupShown = false;
+
+  var popupTimer = null;
+
+  function closePopup() {
+    if (popupTimer) { clearInterval(popupTimer); popupTimer = null; }
+    var ov = document.getElementById('lv-back-promo');
+    if (ov) ov.remove();
+    document.documentElement.style.overflow = '';
+  }
+
+  function showPromoPopup() {
+    if (popupShown) return;
+    popupShown = true;
+
+    var css = document.createElement('style');
+    css.textContent =
+      '#lv-back-promo{position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.62);backdrop-filter:blur(2px);animation:lvbpFade .22s ease-out;font-family:Inter,system-ui,-apple-system,sans-serif}' +
+      '@keyframes lvbpFade{from{opacity:0}to{opacity:1}}' +
+      '@keyframes lvbpUp{from{transform:translateY(46px);opacity:0}to{transform:none;opacity:1}}' +
+      '#lv-back-promo .card{width:100%;max-width:440px;background:#fff;border-radius:22px 22px 0 0;padding:22px 18px calc(20px + env(safe-area-inset-bottom));text-align:center;animation:lvbpUp .3s cubic-bezier(.2,.8,.2,1);position:relative}' +
+      '#lv-back-promo .x{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;border:0;background:#f1f2f4;color:#555;font-size:16px;cursor:pointer;line-height:1}' +
+      '#lv-back-promo .tag{display:inline-block;background:#fe2c55;color:#fff;font-size:11px;font-weight:800;letter-spacing:.06em;padding:6px 12px;border-radius:999px;margin-bottom:10px}' +
+      '#lv-back-promo h2{margin:0 0 4px;font-size:20px;font-weight:800;color:#161823}' +
+      '#lv-back-promo p.sub{margin:0 0 14px;font-size:13px;color:#6b7280}' +
+      '#lv-back-promo img.prod{width:200px;height:200px;object-fit:cover;margin:0 auto 10px;display:block;border-radius:18px;box-shadow:0 0 0 3px #fe2c55,0 0 0 7px #fde047;animation:lvbpGlow 1.4s ease-in-out infinite}' +
+      '@keyframes lvbpGlow{0%,100%{box-shadow:0 0 0 3px #fe2c55,0 0 0 7px #fde047,0 0 18px 6px rgba(254,44,85,.35)}50%{box-shadow:0 0 0 3px #fde047,0 0 0 7px #fe2c55,0 0 30px 12px rgba(250,204,21,.55)}}' +
+      '#lv-back-promo .new{animation:lvbpBeat 1s ease-in-out infinite}@keyframes lvbpBeat{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}' +
+      '#lv-back-promo .cta{animation:lvbpBeat 1.2s ease-in-out infinite}' +
+      '#lv-back-promo .uniq{display:inline-block;background:#161823;color:#fde047;font-size:11px;font-weight:900;letter-spacing:.08em;padding:5px 12px;border-radius:6px;margin-bottom:8px}' +
+      '#lv-back-promo .spk{position:absolute;z-index:2;color:#f59e0b;font-size:15px;line-height:1;animation:lvbpTwinkle 1.9s ease-in-out infinite;text-shadow:0 0 10px rgba(250,204,21,.85)}' +
+      '@keyframes lvbpTwinkle{0%,100%{opacity:0;transform:scale(.35) rotate(0deg)}50%{opacity:1;transform:scale(1.15) rotate(28deg)}}' +
+      '#lv-back-promo .old{font-size:14px;color:#9aa1ad;text-decoration:line-through}' +
+      '#lv-back-promo .new{font-size:34px;font-weight:800;color:#fe2c55;letter-spacing:-.5px;margin:2px 0 2px}' +
+      '#lv-back-promo .off{font-size:12px;font-weight:700;color:#0ea5a4;margin-bottom:14px}' +
+      '#lv-back-promo .timer{display:inline-flex;align-items:center;gap:6px;margin:0 0 14px;background:#fff1f2;border:1px solid #fecdd3;color:#be123c;font-size:12px;font-weight:800;padding:6px 12px;border-radius:999px}' +
+      '#lv-back-promo .timer .secs{display:inline-block;min-width:26px;background:#be123c;color:#fff;border-radius:999px;padding:2px 0;font-size:13px;font-variant-numeric:tabular-nums}' +
+      '#lv-back-promo .cta{display:block;width:100%;border:0;border-radius:999px;background:#fe2c55;color:#fff;font-size:16px;font-weight:800;padding:15px;cursor:pointer;box-shadow:0 10px 22px rgba(254,44,85,.32);font-family:inherit}' +
+      '#lv-back-promo .cta:active{transform:scale(.98)}' +
+      '#lv-back-promo .no{display:inline-block;margin-top:12px;background:none;border:0;font-size:12.5px;color:#9aa1ad;text-decoration:underline;cursor:pointer;font-family:inherit}';
+    document.head.appendChild(css);
+
+    var ov = document.createElement('div');
+    ov.id = 'lv-back-promo';
+    ov.innerHTML =
+      '<div class="card" role="dialog" aria-modal="true" aria-label="Oferta de desconto">' +
+      '<button class="x" type="button" aria-label="Fechar">✕</button>' +
+      '<span class="spk" style="top:20px;left:18px" aria-hidden="true">&#10022;</span>' +
+      '<span class="spk" style="top:70px;right:22px;animation-delay:.6s" aria-hidden="true">&#10022;</span>' +
+      '<span class="spk" style="bottom:130px;left:26px;animation-delay:1.1s" aria-hidden="true">&#10022;</span>' +
+      '<span class="tag">OFERTA RELÂMPAGO</span>' +
+      '<h2>Espera! Não vá embora...</h2>' +
+      '<span class="uniq">OPORTUNIDADE ÚNICA · SÓ NESTE COMBO</span>' +
+      '<p class="sub">Liberamos um combo exclusivo só agora: 2 Motosserras DEWEN 52CC 20 polegadas!</p>' +
+      '<img class="prod" src="/__l5e/assets-v1/e651d836-9c9e-4955-801e-196d87a499aa/duas-motosserras.webp" alt="2 Motosserras DEWEN">' +
+      '<div class="old">De R$ 179,80</div>' +
+      '<div class="new">2 por R$ 100,00</div>' +
+      '<div class="off">44% OFF · sai por R$ 50,00 cada · só nesta página</div>' +
+      '<div class="timer">Oferta expira em <span class="secs">01:00</span></div>' +
+      '<button class="cta" type="button">QUERO AS 2 POR R$ 100,00</button>' +
+      '<button class="no" type="button">Não, obrigado. Prefiro pagar o valor cheio.</button>' +
+      '</div>';
+    document.body.appendChild(ov);
+    document.documentElement.style.overflow = 'hidden';
+
+    var secs = 60;
+    var timerEl = ov.querySelector('.secs');
+    popupTimer = setInterval(function () {
+      secs -= 1;
+      if (secs <= 0) { clearInterval(popupTimer); popupTimer = null; closePopup(); return; }
+      if (timerEl) timerEl.textContent = '00:' + (secs < 10 ? '0' : '') + secs;
+    }, 1000);
+
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov) closePopup();
+    });
+    ov.querySelector('.x').addEventListener('click', closePopup);
+    ov.querySelector('.no').addEventListener('click', function () {
+      closePopup();
+      redirect('/oferta');
+    });
+    ov.querySelector('.cta').addEventListener('click', function () {
+      try {
+        localStorage.setItem('precoUnit', String(50));
+        localStorage.setItem('corSelecionada', 'DEWEN Motosserra a Gasolina 52CC 20 Polegadas (Amarela) x2');
+        localStorage.setItem('corImagem', '__l5e/assets-v1/f7a415ff-8197-4504-974b-d5d3e80a2034/moto-1.webp');
+        localStorage.setItem('qtdSelecionada', '2');
+        localStorage.setItem('coresSelecionadas', JSON.stringify([
+          { name: 'DEWEN Motosserra a Gasolina 52CC 20 Polegadas (Amarela)', label: 'Amarela', quantity: 2, price: 50, img: '/__l5e/assets-v1/f7a415ff-8197-4504-974b-d5d3e80a2034/moto-1.webp' }
+        ]));
+        localStorage.removeItem('voltagemSelecionada');
+      } catch (e) {}
+      try {  } catch (e) {}
+      redirect('pagamento.html');
+    });
+  }
+
+  window.lvShowBackPromo = function(){ popupShown = false; showPromoPopup(); };
+
+  // Marca que o lead abriu o checkout. Se ele voltar para a home sem pagar
+  // (botão voltar do celular, gesto de voltar, aba anterior restaurada etc.),
+  // a home mostra o popup. Ao seguir para os upsells a marca é apagada.
+  var CK = 'lvCheckoutOpen';
+  var curPath = normalize(location.pathname);
+  try {
+    if (curPath === '/pagamento') sessionStorage.setItem(CK, '1');
+    if (/^\/(upsell\d|obrigado)$/.test(curPath)) {
+      sessionStorage.removeItem(CK);
+      sessionStorage.removeItem('lvBackPromo');
+    }
+  } catch (e) {}
+
+  function isBackNav() {
+    try {
+      var w = IN_FRAME ? window.top : window;
+      var nav = w.performance.getEntriesByType('navigation')[0];
+      return !!nav && nav.type === 'back_forward';
+    } catch (e) { return false; }
+  }
+
+  // Chegou na home vindo do carrinho/checkout: abre o popup (também dentro do iframe da home).
+  function checkPromo(persisted) {
+    try {
+      var hp = normalize(location.pathname);
+      var homeTopWithFrame = !IN_FRAME && hp === '/' && document.querySelector('iframe[src*="site"]');
+      var fromCheckout = sessionStorage.getItem(CK) === '1';
+      if (HOME_PATHS[hp] && !homeTopWithFrame &&
+          (sessionStorage.getItem('lvBackPromo') === '1' || fromCheckout)) {
+        sessionStorage.removeItem('lvBackPromo');
+        sessionStorage.removeItem(CK);
+        if (persisted) popupShown = false;
+        setTimeout(showPromoPopup, 600);
+        return;
+      }
+      // Voltou do checkout para a loja: leva para a home com a oferta.
+      if (hp === '/loja' && fromCheckout && (persisted || isBackNav())) {
+        sessionStorage.removeItem(CK);
+        sessionStorage.setItem('lvBackPromo', '1');
+        var target = IN_FRAME ? window.top : window;
+        try {
+          var u = new URL('/', target.location.href);
+          u.search = target.location.search;
+          target.location.href = u.toString();
+        } catch (e2) { target.location.href = 'index.html'; }
+      }
+    } catch (e) {}
+  }
+  checkPromo(false);
+  // Página restaurada do cache do navegador ao apertar "voltar" (comum no celular).
+  window.addEventListener('pageshow', function (ev) {
+    if (ev.persisted) { closePopup(); checkPromo(true); }
+  });
+
+  if (IN_FRAME) return;
+
+  var redirected = false;
+
+  function onBack() {
+    if (redirected) return;
+    var path = normalize(location.pathname);
+    if (path === '/loja' || path === '/pagamento') {
+      // Volta da loja ou do checkout para a home e abre o popup de oferta lá.
+      redirected = true;
+      try { sessionStorage.setItem('lvBackPromo', '1'); } catch (e) {}
+      redirect('/');
+      return;
+    }
+    if (HOME_PATHS[path]) {
+      // Popup pode ser reaberto em um próximo "voltar" caso a pessoa feche.
+      showPromoPopup();
+      try { history.pushState({ __lvBackGuard: true }, '', location.href); } catch (e) {}
+      return;
+    }
+    var to = targetFor(path);
+    if (to && to !== path) {
+      redirected = true;
+      redirect(to);
+    }
+  }
+
+  window.addEventListener('popstate', function () {
+    // Pequeno delay para evitar conflito com routers que cancelam a navegação.
+    setTimeout(onBack, 0);
+  });
+
+  // Insere uma entrada fantasma no histórico para que, mesmo que a página seja
+  // a primeira do tab, o primeiro "voltar" dispare popstate dentro do site.
+  try {
+    history.pushState({ __lvBackGuard: true }, '', location.href);
+  } catch (e) {}
+
+})();

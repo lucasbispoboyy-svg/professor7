@@ -1,0 +1,19 @@
+/* Navegação local sem captura ou propagação de campanhas. */
+(function(){
+  var ATTRIBUTION_KEYS=['utm_source','utm_campaign','utm_medium','utm_content','utm_term','fbclid','ttclid','src','sck'];
+  window.getUTMs=function(){
+    var out={};
+    try{var p=new URLSearchParams(window.location.search); ATTRIBUTION_KEYS.forEach(function(k){if(p.has(k)) out[k]=p.get(k);});}catch(e){}
+    return out;
+  };
+  window.getFbData=function(){return window.getUTMs();};
+  window.lvUrl=function(path){
+    try{
+      var target=new URL(String(path||'/'),window.location.href);
+      var current=new URLSearchParams(window.location.search);
+      current.forEach(function(value,key){if(!target.searchParams.has(key)) target.searchParams.set(key,value);});
+      return target.pathname+target.search+target.hash;
+    }catch(e){return String(path||'/');}
+  };
+  window.lvGo=function(path){window.location.assign(window.lvUrl(path));};
+})();
